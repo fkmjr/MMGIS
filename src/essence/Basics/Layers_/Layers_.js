@@ -5,6 +5,8 @@ import Search from '../../Ancillary/Search'
 import Attributions from '../../Ancillary/Attributions'
 import ToolController_ from '../../Basics/ToolController_/ToolController_'
 import LayerGeologic from './LayerGeologic/LayerGeologic'
+import { transformStacUrl, parseExternalStacUrl } from './LayerUtils'
+import Filtering from './Filtering/Filtering'
 import $ from 'jquery'
 
 const L_ = {
@@ -76,7 +78,7 @@ const L_ = {
     toggledOffFeatures: [],
     mapAndGlobeLinked: false,
     addLayerQueue: [],
-    _layersBeingMade: {},
+    _layersBeingMade: {}, // Global layer construction lock (default for main map; offscreen maps use their own)
     _onLoadCallbacks: [],
     _loaded: false,
     init: async function (configData, missionsList, urlOnLayers) {
@@ -111,7 +113,7 @@ const L_ = {
         L_.layers = {
             data: {},
             dataFlat: [],
-            leafletLayer: {},
+            layer: {},
             attachments: {},
             toggled: {},
             opacity: {},
@@ -248,6 +250,16 @@ const L_ = {
         let wasCOG = false
 
         let nextUrl = url
+
+        // Handle STAC collection URLs using shared transformation function
+        if (
+            nextUrl != null &&
+            nextUrl.toLowerCase().startsWith('stac-collection:')
+        ) {
+            nextUrl = transformStacUrl(nextUrl, layerData, type, window.location)
+            // After transformation, nextUrl is now an absolute HTTP URL
+        }
+
         if (nextUrl != null && nextUrl.startsWith('COG:')) {
             nextUrl = nextUrl.slice(4)
             wasCOG = true
@@ -324,6 +336,7 @@ const L_ = {
         if (
             wasNeverOn &&
             s.type === 'vector' &&
+            s.time != null &&
             s.time.type === 'local' &&
             s.time.endProp != null &&
             s.controlled !== true
@@ -333,6 +346,30 @@ const L_ = {
                 new Date(s.time.start).getTime(),
                 new Date(s.time.end).getTime()
             )
+        }
+
+        // Apply initial filters when layer is first turned on
+        if (
+            wasNeverOn &&
+            s.type === 'vector' &&
+            s.variables?.initialFilters &&
+            s.variables.initialFilters.length > 0 &&
+            Filtering.filters[s.name]
+        ) {
+            try {
+                // Populate geojson from the now-loaded layer
+                Filtering.filters[s.name].geojson =
+                    Filtering.filters[s.name].geojson ||
+                    L_.layers.layer[s.name].toGeoJSON(L_.GEOJSON_PRECISION)
+
+                // Apply the initial filters
+                Filtering.submit(s.name)
+            } catch (err) {
+                console.warn(
+                    `Filtering - Could not apply initial filters for layer: ${s.name}`,
+                    err
+                )
+            }
         }
     },
     toggleLayerHelper: async function (
@@ -487,6 +524,18 @@ const L_ = {
                     let demUrl = L_.getUrl(s.type, s.demtileurl, s)
                     if (s.demtileurl == undefined || s.demtileurl.length == 0)
                         demUrl = undefined
+
+                    // Detect splitColonType from original URL
+                    let splitColonType = undefined
+                    if (s.url && typeof s.url === 'string') {
+                        const lowerUrl = s.url.toLowerCase()
+                        if (lowerUrl.startsWith('stac-collection:')) {
+                            splitColonType = 'stac-collection'
+                        } else if (lowerUrl.startsWith('cog:')) {
+                            splitColonType = 'COG'
+                        }
+                    }
+
                     L_.Globe_.litho.addLayer('tile', {
                         name: s.name,
                         order: L_._layersOrdered,
@@ -506,6 +555,16 @@ const L_ = {
                         maxZoom: s.maxNativeZoom,
                         //boundingBox: s.boundingBox,
                         time: s.time,
+                        // COG parameters for TiTiler layers
+                        splitColonType: splitColonType,
+                        cogTransform: s.cogTransform,
+                        cogMin: s.cogMin,
+                        cogMax: s.cogMax,
+                        currentCogMin: s.currentCogMin,
+                        currentCogMax: s.currentCogMax,
+                        cogColormap: s.cogColormap,
+                        cogExpression: s.cogExpression,
+                        currentCogExpression: s.currentCogExpression,
                     })
                 } else if (s.type === 'data') {
                 } else if (s.type === 'model') {
@@ -922,9 +981,8 @@ const L_ = {
 
                 // Add Globe layers
                 const s = L_.layers.dataFlat[i]
-                let layerUrl = s.url
-                if (!F_.isUrlAbsolute(layerUrl))
-                    layerUrl = L_.missionPath + layerUrl
+                // Use getUrl to properly transform STAC URLs and handle COG prefix
+                let layerUrl = L_.getUrl('tile', s.url, s)
                 if (
                     s.type === 'tile' ||
                     s.type === 'data' ||
@@ -941,6 +999,18 @@ const L_ = {
                     if (!F_.isUrlAbsolute(demUrl))
                         demUrl = L_.missionPath + demUrl
                     if (s.demtileurl == undefined) demUrl = undefined
+
+                    // Detect splitColonType from original URL
+                    let splitColonType = undefined
+                    if (s.url && typeof s.url === 'string') {
+                        const lowerUrl = s.url.toLowerCase()
+                        if (lowerUrl.startsWith('stac-collection:')) {
+                            splitColonType = 'stac-collection'
+                        } else if (lowerUrl.startsWith('cog:')) {
+                            splitColonType = 'COG'
+                        }
+                    }
+
                     if (s.type === 'tile')
                         L_.Globe_.litho.addLayer('tile', {
                             name: s.name,
@@ -961,6 +1031,16 @@ const L_ = {
                             maxZoom: s.maxNativeZoom,
                             //boundingBox: s.boundingBox,
                             time: s.time,
+                            // COG parameters for TiTiler layers
+                            splitColonType: splitColonType,
+                            cogTransform: s.cogTransform,
+                            cogMin: s.cogMin,
+                            cogMax: s.cogMax,
+                            currentCogMin: s.currentCogMin,
+                            currentCogMax: s.currentCogMax,
+                            cogColormap: s.cogColormap,
+                            cogExpression: s.cogExpression,
+                            currentCogExpression: s.currentCogExpression,
                         })
                 } else if (s.type === 'model') {
                     L_.Globe_.litho.addLayer('model', {
@@ -1051,8 +1131,8 @@ const L_ = {
                     geojson.features
                         ? geojson.features
                         : geojson.length > 0 && geojson[0].type === 'Feature'
-                        ? geojson
-                        : null
+                          ? geojson
+                          : null
                 )
             if (keepLastN && keepLastN > 0) {
                 layer._sourceGeoJSON.features =
@@ -1322,6 +1402,11 @@ const L_ = {
                                 minZoom,
                                 maxZoom
                             )
+                            // If this is a LayerGroup with a feature (like arrows),
+                            // don't process children separately - they're handled as a unit
+                            if (layer[i]._layers && Object.keys(layer[i]._layers).length > 0) {
+                                continue
+                            }
                         }
                         if (layer[i]._layers)
                             for (let layerId in layer[i]._layers) {
@@ -1331,6 +1416,42 @@ const L_ = {
                                     maxZoom
                                 )
                             }
+                    }
+                }
+
+                // Enforce zoom constraints on sublayer attachments (labels, pairings, etc.)
+                if (L_.layers.attachments[layerName]) {
+                    const currentZoom = L_.Map_.map.getZoom()
+                    for (let subName in L_.layers.attachments[layerName]) {
+                        const sublayer = L_.layers.attachments[layerName][subName]
+                        if (sublayer && sublayer.minZoom != null && sublayer.maxZoom != null) {
+                            const sublayerMinZoom = sublayer.minZoom
+                            const sublayerMaxZoom = sublayer.maxZoom
+                            const isInRange = F_.isInZoomRange(
+                                sublayerMinZoom,
+                                sublayerMaxZoom,
+                                currentZoom
+                            )
+
+                            // Store the actual zoom visibility state separately from user preference
+                            const wasZoomVisible = sublayer._zoomVisible !== false
+                            sublayer._zoomVisible = isInRange
+
+                            // Only show/hide if user has enabled this sublayer and zoom visibility changed
+                            if (sublayer.on === true) {
+                                if (isInRange && !wasZoomVisible) {
+                                    // Sublayer entered zoom range - show it
+                                    if (sublayer.layer && typeof sublayer.layer.on === 'function') {
+                                        sublayer.layer.on()
+                                    }
+                                } else if (!isInRange && wasZoomVisible) {
+                                    // Sublayer exited zoom range - hide it
+                                    if (sublayer.layer && typeof sublayer.layer.off === 'function') {
+                                        sublayer.layer.off()
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1346,20 +1467,101 @@ const L_ = {
         if (l.feature?.properties?.style?.maxZoom != null)
             featureMaxZoom = l.feature.properties.style.maxZoom
 
-        if (
-            F_.isInZoomRange(
-                featureMinZoom != null ? featureMinZoom : minZoom,
-                featureMaxZoom != null ? featureMaxZoom : maxZoom,
-                L_.Map_.map.getZoom()
-            )
-        ) {
-            if (l._path) l._path.style.display = 'inherit'
-            if (l._container) l._container.style.display = 'inherit'
-            if (l._icon) l._icon.style.display = 'inherit'
+        const isVisible = F_.isInZoomRange(
+            featureMinZoom != null ? featureMinZoom : minZoom,
+            featureMaxZoom != null ? featureMaxZoom : maxZoom,
+            L_.Map_.map.getZoom()
+        )
+
+        // For LayerGroups (like arrows), add/remove from map instead of setting display
+        if (l._layers && Object.keys(l._layers).length > 0) {
+            if (isVisible) {
+                if (L_.Map_.map && !L_.Map_.map.hasLayer(l)) {
+                    L_.Map_.map.addLayer(l)
+                }
+            } else {
+                if (L_.Map_.map && L_.Map_.map.hasLayer(l)) {
+                    L_.Map_.map.removeLayer(l)
+                }
+            }
+            // Still handle tooltips for LayerGroups
+            if (l._tooltip) {
+                if (isVisible) {
+                    if (l._tooltip._container) {
+                        l._tooltip._container.style.display = 'inherit'
+                    }
+                    if (l._tooltip.options.permanent && !l.isTooltipOpen()) {
+                        l.openTooltip()
+                    }
+                } else {
+                    if (l._tooltip._container) {
+                        l._tooltip._container.style.display = 'none'
+                    }
+                    if (l.isTooltipOpen && l.isTooltipOpen()) {
+                        l.closeTooltip()
+                    }
+                }
+            }
         } else {
-            if (l._path) l._path.style.display = 'none'
-            if (l._container) l._container.style.display = 'none'
-            if (l._icon) l._icon.style.display = 'none'
+            // For individual features, set display style
+            if (isVisible) {
+                if (l._path) l._path.style.display = 'inherit'
+                if (l._container) l._container.style.display = 'inherit'
+                if (l._icon) l._icon.style.display = 'inherit'
+                
+                // Show tooltip if it exists and was previously open
+                if (l._tooltip) {
+                    if (l._tooltip._container) {
+                        l._tooltip._container.style.display = 'inherit'
+                    }
+                    // Reopen tooltip if it was bound as permanent
+                    if (l._tooltip.options.permanent && !l.isTooltipOpen()) {
+                        l.openTooltip()
+                    }
+                }
+            } else {
+                if (l._path) l._path.style.display = 'none'
+                if (l._container) l._container.style.display = 'none'
+                if (l._icon) l._icon.style.display = 'none'
+                
+                // Hide tooltip if it exists
+                if (l._tooltip) {
+                    if (l._tooltip._container) {
+                        l._tooltip._container.style.display = 'none'
+                    }
+                    // Close tooltip if open
+                    if (l.isTooltipOpen && l.isTooltipOpen()) {
+                        l.closeTooltip()
+                    }
+                }
+            }
+        }
+    },
+    getFirstCoordinate: function (geometry) {
+        // Extract the first coordinate from a geometry to use as label anchor
+        if (!geometry || !geometry.coordinates) return null
+
+        let coords = geometry.coordinates
+        const type = geometry.type
+
+        switch (type) {
+            case 'Point':
+                // [lng, lat]
+                return L.latLng(coords[1], coords[0])
+            case 'LineString':
+                // [[lng, lat], ...]
+                return L.latLng(coords[0][1], coords[0][0])
+            case 'Polygon':
+                // [[[lng, lat], ...], ...]
+                return L.latLng(coords[0][0][1], coords[0][0][0])
+            case 'MultiLineString':
+                // [[[lng, lat], ...], ...]
+                return L.latLng(coords[0][0][1], coords[0][0][0])
+            case 'MultiPolygon':
+                // [[[[lng, lat], ...], ...], ...]
+                return L.latLng(coords[0][0][0][1], coords[0][0][0][0])
+            default:
+                return null
         }
     },
     addArrowToMap: function (
@@ -2067,17 +2269,20 @@ const L_ = {
         const roundCoordinates = (coords, precision) => {
             if (typeof coords[0] === 'number') {
                 // Single coordinate pair [lng, lat]
-                return coords.map(c => parseFloat(c.toFixed(precision)))
+                return coords.map((c) => parseFloat(c.toFixed(precision)))
             } else {
                 // Nested array of coordinates
-                return coords.map(c => roundCoordinates(c, precision))
+                return coords.map((c) => roundCoordinates(c, precision))
             }
         }
 
         const roundGeometry = (geometry) => {
             if (!geometry || !geometry.coordinates) return geometry
             const rounded = JSON.parse(JSON.stringify(geometry))
-            rounded.coordinates = roundCoordinates(rounded.coordinates, L_.GEOJSON_PRECISION)
+            rounded.coordinates = roundCoordinates(
+                rounded.coordinates,
+                L_.GEOJSON_PRECISION
+            )
             return rounded
         }
 
@@ -2123,9 +2328,15 @@ const L_ = {
                 // This accounts for precision differences between Cesium (which receives
                 // precision-reduced GeoJSON) and Leaflet (which has full precision)
                 const roundedClickedGeometry = roundGeometry(f.geometry)
-                const roundedLayerGeometry = roundGeometry(layers[l].feature.geometry)
+                const roundedLayerGeometry = roundGeometry(
+                    layers[l].feature.geometry
+                )
 
-                const geometryMatch = F_.isEqual(roundedLayerGeometry, roundedClickedGeometry, true)
+                const geometryMatch = F_.isEqual(
+                    roundedLayerGeometry,
+                    roundedClickedGeometry,
+                    true
+                )
                 const propertiesMatch = F_.isEqual(
                     lfeatureWithout_.properties,
                     featureWithout_.properties,
@@ -2178,11 +2389,12 @@ const L_ = {
             })
         }
         if (layerData?.variables?.useKeyAsName) {
-            dynamicProps = dynamicProps.concat(
+            const keyNames = (
                 typeof layerData.variables.useKeyAsName === 'string'
                     ? [layerData.variables.useKeyAsName]
                     : layerData.variables.useKeyAsName
-            )
+            ).filter((k) => k != null && k !== '')
+            dynamicProps = dynamicProps.concat(keyNames)
         }
         return dynamicProps
     },
@@ -3392,6 +3604,9 @@ const L_ = {
                 propertyNames = l.variables['useKeyAsName']
                 if (typeof propertyNames === 'string')
                     propertyNames = [propertyNames]
+                propertyNames = propertyNames.filter(
+                    (k) => k != null && k !== ''
+                )
                 propertyValues = Array(propertyNames.length).fill(null)
                 propertyNames.forEach((propertyName, idx) => {
                     if (

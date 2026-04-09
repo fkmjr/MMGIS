@@ -6,6 +6,7 @@ import {
     constructVectorLayer,
     constructSublayers,
 } from '../Layers_/LayerConstructors'
+import { transformStacUrl } from '../Layers_/LayerUtils'
 import Filtering from '../Layers_/Filtering/Filtering'
 import Viewer_ from '../Viewer_/Viewer_'
 import Globe_ from '../Globe_/Globe_'
@@ -508,15 +509,25 @@ let Map_ = {
         stopLoops
     ) {
         // If it's a dynamic extent layer, just re-call its function
-        if (
-            L_._onSpecificLayerToggleSubscriptions[
-                `dynamicextent_${layerObj.name}`
-            ] != null
-        ) {
-            if (L_.layers.on[layerObj.name])
-                L_._onSpecificLayerToggleSubscriptions[
-                    `dynamicextent_${layerObj.name}`
-                ].func(layerObj.name)
+        const dynamicExtentKey = `dynamicextent_${layerObj.name}`
+        const dynamicGeodatasetKey = `dynamicgeodataset_${layerObj.name}`  // For velocity layers
+
+        const subscription = L_._onSpecificLayerToggleSubscriptions[dynamicExtentKey]
+                          || L_._onSpecificLayerToggleSubscriptions[dynamicGeodatasetKey]
+
+        if (subscription != null) {
+            if (L_.layers.on[layerObj.name]) {
+                const layerData = L_.layers.data[layerObj.name]
+
+                // Always bypass threshold for explicit refreshLayer() calls
+                // (refresh intervals, time changes, manual API calls)
+                // Pan/zoom events call the callback directly, not via refreshLayer
+                if (layerData) {
+                    layerData._ignoreDynamicExtentMoveThreshold = true
+                }
+
+                subscription.func(layerObj.name)
+            }
 
             if (typeof cb === 'function') cb()
             return true
@@ -677,18 +688,21 @@ async function makeLayer(
     // Default to main map context for backward compatibility
     const mapContext = targetMapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
+        default: true,
     }
     return new Promise(async (resolve, reject) => {
         const layerName = L_.asLayerUUID(layerObj.name)
-        if (forceMake !== true && L_._layersBeingMade[layerName] === true) {
+        // Use map-specific lock if available, otherwise fall back to global lock
+        const lockRegistry = mapContext.layerRegistry._layersBeingMade || L_._layersBeingMade
+        if (forceMake !== true && lockRegistry[layerName] === true) {
             console.error(
                 `ERROR - makeLayer: Cannot make layer ${layerObj.display_name}/${layerObj.name} as it's already being made!`
             )
             resolve(false)
             return
         } else {
-            L_._layersBeingMade[layerName] = true
+            lockRegistry[layerName] = true
         }
         //Decide what kind of layer it is
         //Headers do not need to be made
@@ -721,7 +735,14 @@ async function makeLayer(
                     makeVectorTileLayer(layerObj, mapContext)
                     break
                 case 'query':
-                    await makeVectorLayer(layerObj, false, true, forceGeoJSON, false, mapContext)
+                    await makeVectorLayer(
+                        layerObj,
+                        false,
+                        true,
+                        forceGeoJSON,
+                        false,
+                        mapContext
+                    )
                     break
                 case 'data':
                     makeDataLayer(layerObj, mapContext)
@@ -741,8 +762,8 @@ async function makeLayer(
             }
         }
 
-        // release hold on layer
-        L_._layersBeingMade[layerName] = false
+        // release hold on layer (use same registry as above)
+        lockRegistry[layerName] = false
 
         if (stopLoops !== true && layerObj.type === 'vector') {
             Filtering.updateGeoJSON(layerObj.name)
@@ -891,7 +912,8 @@ async function makeVectorLayer(
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
+        default: true,
     }
 
     return new Promise((resolve, reject) => {
@@ -923,7 +945,10 @@ async function makeVectorLayer(
             data = F_.parseIntoGeoJSON(data)
 
             let invalidGeoJSONTrace = gjv.valid(data, true)
-            const allowableErrors = [`position must only contain numbers`]
+            const allowableErrors = [
+                `position must only contain numbers`,
+                `coord_properties`,
+            ]
 
             invalidGeoJSONTrace = invalidGeoJSONTrace.filter((t) => {
                 if (typeof t !== 'string') return false
@@ -941,7 +966,8 @@ async function makeVectorLayer(
                 if (data != null && data != 'off') {
                     data = null
                     console.warn(
-                        `ERROR: ${layerObj.display_name} has invalid GeoJSON!`
+                        `ERROR: ${layerObj.display_name} has invalid GeoJSON!`,
+                        invalidGeoJSONTrace
                     )
                 }
 
@@ -952,14 +978,20 @@ async function makeVectorLayer(
                     if (existingLayer != null && existingLayer !== false) {
                         console.warn(
                             `[${new Date().toISOString()}] Refresh failed for ${layerObj.display_name}, ` +
-                            `keeping existing layer. Next refresh in ${layerObj.time?.refreshIntervalAmount || 60}s`
+                                `keeping existing layer. Next refresh in ${layerObj.time?.refreshIntervalAmount || 60}s`
                         )
                         // Mark layer as having a failed refresh
                         ctx.layerRegistry.refreshFailed[layerObj.name] = true
                         // Dispatch event so LayersTool can update the UI
-                        const event = new CustomEvent('layerRefreshStatusChanged', {
-                            detail: { layerName: layerObj.name, failed: true }
-                        })
+                        const event = new CustomEvent(
+                            'layerRefreshStatusChanged',
+                            {
+                                detail: {
+                                    layerName: layerObj.name,
+                                    failed: true,
+                                },
+                            }
+                        )
                         document.dispatchEvent(event)
                         resolve()
                         return
@@ -967,10 +999,10 @@ async function makeVectorLayer(
                 }
 
                 // Only set to null for initial loads or if no existing layer
-                L_._layersLoaded[
-                    L_._layersOrdered.indexOf(layerObj.name)
-                ] = true
-                ctx.layerRegistry.layer[layerObj.name] = data == null ? null : false
+                L_._layersLoaded[L_._layersOrdered.indexOf(layerObj.name)] =
+                    true
+                ctx.layerRegistry.layer[layerObj.name] =
+                    data == null ? null : false
                 allLayersLoaded()
                 resolve()
                 return
@@ -979,14 +1011,15 @@ async function makeVectorLayer(
             layerObj.style = layerObj.style || {}
             layerObj.style.layerName = layerObj.name
 
-            layerObj.style.opacity = ctx.layerRegistry.opacity[layerObj.name] || 1
+            layerObj.style.opacity =
+                ctx.layerRegistry.opacity[layerObj.name] || 1
             //layerObj.style.fillOpacity = ctx.layerRegistry.opacity[layerObj.name]
 
             const vl = constructVectorLayer(
                 data,
                 layerObj,
                 onEachFeatureDefault,
-                Map_  // Keep passing Map_ - constructVectorLayer expects this
+                Map_ // Keep passing Map_ - constructVectorLayer expects this
             )
 
             // For refresh operations, toggle off old layer and handle seamless swap
@@ -998,30 +1031,46 @@ async function makeVectorLayer(
                 ctx.map.hasLayer(ctx.layerRegistry.layer[layerObj.name])
             ) {
                 wasOnForRefresh = true
-                L_.toggleLayer(ctx.layerRegistry.data[layerObj.name], true, true)
+                L_.toggleLayer(
+                    ctx.layerRegistry.data[layerObj.name],
+                    true,
+                    true
+                )
+            }
+
+            // Clear local time filter cache on refresh so new data is used
+            if (isRefresh && L_._localTimeFilterCache) {
+                delete L_._localTimeFilterCache[layerObj.name]
             }
 
             ctx.layerRegistry.attachments[layerObj.name] = vl.sublayers
             ctx.layerRegistry.layer[layerObj.name] = vl.layer
 
             // Add to appropriate map
-            if (vl.layer) {
+            if (vl.layer && ctx.default != true) {
                 vl.layer.addTo(ctx.map)
             }
 
             // Clear refresh failed status on successful load/refresh
-            if (ctx.layerRegistry.refreshFailed && ctx.layerRegistry.refreshFailed[layerObj.name]) {
+            if (
+                ctx.layerRegistry.refreshFailed &&
+                ctx.layerRegistry.refreshFailed[layerObj.name]
+            ) {
                 ctx.layerRegistry.refreshFailed[layerObj.name] = false
                 // Dispatch event so LayersTool can update the UI
                 const event = new CustomEvent('layerRefreshStatusChanged', {
-                    detail: { layerName: layerObj.name, failed: false }
+                    detail: { layerName: layerObj.name, failed: false },
                 })
                 document.dispatchEvent(event)
             }
 
             // For refresh operations, turn the new layer back on if the old one was on
             if (isRefresh && wasOnForRefresh) {
-                L_.toggleLayer(ctx.layerRegistry.data[layerObj.name], false, true)
+                L_.toggleLayer(
+                    ctx.layerRegistry.data[layerObj.name],
+                    false,
+                    true
+                )
             }
 
             L_._layersLoaded[L_._layersOrdered.indexOf(layerObj.name)] = true
@@ -1043,7 +1092,7 @@ async function makeVelocityLayer(
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
     }
     return new Promise((resolve, reject) => {
         if (forceGeoJSON) add(forceGeoJSON)
@@ -1210,9 +1259,8 @@ async function makeVelocityLayer(
                     rainLayer.setZIndex = function () {}
                     L_.layers.layer[layerObj.name] = rainLayer
                 }
-                L_._layersLoaded[
-                    L_._layersOrdered.indexOf(layerObj.name)
-                ] = true
+                L_._layersLoaded[L_._layersOrdered.indexOf(layerObj.name)] =
+                    true
             }
             allLayersLoaded()
             resolve()
@@ -1224,15 +1272,8 @@ async function makeTileLayer(layerObj, mapContext = null) {
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
-    }
-
-    // Helper function to add default 'asset_' prefix to bands in expressions if not already prefixed
-    const processExpression = (expression) => {
-        if (!expression || expression.trim() === '') return expression
-        // Replace bX or BX (where X is a number) with asset_bX or asset_BX
-        // Only replace if not already prefixed with an asset name (word_bX pattern)
-        return expression.replace(/(?<!\w)([bB])(\d+)/g, 'asset_$1$2')
+        layerRegistry: L_.layers,
+        default: true,
     }
 
     let layerUrl = L_.getUrl(layerObj.type, layerObj.url, layerObj)
@@ -1247,37 +1288,15 @@ async function makeTileLayer(layerObj, mapContext = null) {
         switch (splitColonLayerUrl[0]) {
             case 'stac-collection':
                 splitColonType = splitColonLayerUrl[0]
-                const splitParams = splitColonLayerUrl[1].split('?')
-
-                // Bands parameter (expression will be added dynamically in getTileUrl)
-                let bandsParamStac = ''
-
-                // Only add bands if no expression exists (expression takes precedence)
-                if (
-                    !layerObj.cogExpression ||
-                    layerObj.cogExpression.trim() === ''
-                ) {
-                    b = layerObj.cogBands
-                    if (b != null) {
-                        b.forEach((band) => {
-                            if (band != null) bandsParamStac += `&bidx=${band}`
-                        })
-                    }
-                }
-
-                // Resampling
-                resamplingParam = ''
-                if (layerObj.cogResampling) {
-                    resamplingParam = `&resampling=${layerObj.cogResampling}`
-                }
-
-                layerUrl = `${window.location.origin}${(
-                    window.location.pathname || ''
-                ).replace(/\/$/g, '')}/titilerpgstac/collections/${
-                    splitParams[0]
-                }/tiles/${
-                    layerObj.tileMatrixSet || 'WebMercatorQuad'
-                }/{z}/{x}/{y}?assets=asset${bandsParamStac}${resamplingParam}`
+                // Use shared transformation function
+                layerUrl = transformStacUrl(
+                    layerObj.url,
+                    layerObj,
+                    'tile',
+                    window.location
+                )
+                // Cache transformed URL for reuse (e.g., in animations)
+                layerObj._transformedUrl = layerUrl
                 layerObj.tileformat = 'wmts'
                 break
             case 'COG':
@@ -1310,6 +1329,7 @@ async function makeTileLayer(layerObj, mapContext = null) {
                     layerObj.tileMatrixSet || 'WebMercatorQuad'
                 }/{z}/{x}/{y}.webp?url=${layerUrl}${bandsParam}${resamplingParam}`
 
+                break
             default:
                 break
         }
@@ -1370,10 +1390,15 @@ async function makeTileLayer(layerObj, mapContext = null) {
         variables: layerObj.variables || {},
     })
 
-    // Add to appropriate map
-    ctx.layerRegistry.layer[layerObj.name].addTo(ctx.map)
+    // Add to map
+    if (ctx.default != true) {
+        ctx.layerRegistry.layer[layerObj.name].addTo(ctx.map)
+    }
 
-    L_.setLayerOpacity(layerObj.name, ctx.layerRegistry.opacity[layerObj.name] || 1)
+    L_.setLayerOpacity(
+        layerObj.name,
+        ctx.layerRegistry.opacity[layerObj.name] || 1
+    )
 
     L_._layersLoaded[L_._layersOrdered.indexOf(layerObj.name)] = true
     ctx.layerRegistry.layer[layerObj.name].off('loading')
@@ -1429,7 +1454,7 @@ function makeVectorTileLayer(layerObj, mapContext = null) {
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
     }
     let layerUrl = L_.getUrl(layerObj.type, layerObj.url, layerObj)
 
@@ -1612,7 +1637,7 @@ function makeModelLayer(layerObj, mapContext = null) {
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
     }
     L_._layersLoaded[L_._layersOrdered.indexOf(layerObj.name)] = true
     allLayersLoaded()
@@ -1622,9 +1647,76 @@ function makeDataLayer(layerObj, mapContext = null) {
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
     }
-    let layerUrl = L_.getUrl(layerObj.type, layerObj.demtileurl, layerObj)
+
+    // COG:/stac-collection: prefixes (or demSourceType field) — serve 32-bit float
+    // tiles via TiTiler. leaflet.tilelayer.gl decodes client-side (NPY preferred)
+    // and encodes as RGBA float so the colorize shader works unchanged.
+    // TiTiler uses XYZ (tms: false); non-TiTiler sources use TMS (tms: true).
+    const demUrl = layerObj.demtileurl || ''
+    const demSourceType = layerObj.demSourceType || ''
+    // Detect COG: either explicit prefix or demSourceType field set to 'COG'
+    const isCogSource =
+        demUrl.startsWith('COG:') ||
+        (demSourceType === 'COG' &&
+            !demUrl.startsWith('stac-collection:') &&
+            !demUrl.startsWith('http'))
+    // Detect stac-collection: either explicit prefix or demSourceType field
+    const isStacSource =
+        demUrl.startsWith('stac-collection:') ||
+        demSourceType === 'stac-collection'
+    let layerUrl
+    let isTiTilerSource = false
+    if (isCogSource) {
+        isTiTilerSource = true
+        // Strip 'COG:' prefix if present, otherwise use the path as-is
+        let cogUrl = demUrl.startsWith('COG:') ? demUrl.slice(4) : demUrl
+        if (!F_.isUrlAbsolute(cogUrl)) {
+            // Prepend mission directory for relative paths (same as L_.getUrl)
+            cogUrl = L_.missionPath + cogUrl
+        }
+        if (!F_.isUrlAbsolute(cogUrl)) {
+            // Pass a TiTiler-relative path (../../ reaches the project root
+            // where Missions/ lives); in Docker use an absolute /path instead
+            cogUrl =
+                window.mmgisglobal.IS_DOCKER === 'true'
+                    ? `/${cogUrl}`
+                    : `../../${cogUrl}`
+        }
+        const origin = window.location.origin
+        const pathname = (window.location.pathname || '').replace(/\/$/g, '')
+        const baseUrl = `${origin}${pathname}`
+        const bidx = (layerObj.cogBands && layerObj.cogBands[0]) || 1
+        const nodata =
+            layerObj.cogNodata != null ? `&nodata=${layerObj.cogNodata}` : ''
+        const tms = layerObj.tileMatrixSet || 'WebMercatorQuad'
+        const parser = layerObj.demparser || 'npy'
+        let tileBase
+        if (parser === 'terrarium') {
+            tileBase = `${baseUrl}/titiler/cog/tiles/${tms}/{z}/{x}/{y}.png?algorithm=terrarium`
+        } else if (parser === 'terrainrgb') {
+            tileBase = `${baseUrl}/titiler/cog/tiles/${tms}/{z}/{x}/{y}.png?algorithm=terrainrgb`
+        } else {
+            tileBase = `${baseUrl}/titiler/cog/tiles/${tms}/{z}/{x}/{y}.npy`
+        }
+        const qsep = tileBase.includes('?') ? '&' : '?'
+        layerUrl = `${tileBase}${qsep}url=${encodeURIComponent(cogUrl)}&bidx=${bidx}${nodata}`
+    } else if (isStacSource) {
+        isTiTilerSource = true
+        // For stac-collection without prefix, normalise to stac-collection:{name}
+        const normUrl = demUrl.startsWith('stac-collection:')
+            ? demUrl
+            : `stac-collection:${demUrl}`
+        layerUrl = transformStacUrl(
+            normUrl,
+            layerObj,
+            'data',
+            window.location
+        )
+    } else {
+        layerUrl = L_.getUrl(layerObj.type, demUrl, layerObj)
+    }
 
     let bb = null
     if (layerObj.hasOwnProperty('boundingBox')) {
@@ -1634,8 +1726,23 @@ function makeDataLayer(layerObj, mapContext = null) {
         )
     }
 
-    const shader = F_.getIn(layerObj, 'variables.shader') || {}
+    const shader = { ...(F_.getIn(layerObj, 'variables.shader') || {}) }
     const shaderType = shader.type || 'image'
+
+    // For terrarium tiles, auto-inject -32768 as a no-data sentinel.
+    // TiTiler encodes no-data pixels as R=G=B=0 which decodes to exactly -32768 in terrarium.
+    // Adding it to noDataValues causes the GLSL nodatavalue check to render those pixels
+    // transparent AND causes the JS min/max loop to skip them, keeping the color scale clean.
+    if ((isCogSource || isStacSource) && (layerObj.demparser || 'npy') === 'terrarium') {
+        const ndv = shader.noDataValues ? shader.noDataValues.map(Number) : []
+        if (!ndv.includes(-32768)) ndv.push(-32768)
+        shader.noDataValues = ndv
+    }
+    if ((isCogSource || isStacSource) && (layerObj.demparser || 'npy') === 'terrainrgb') {
+        const ndv = shader.noDataValues ? shader.noDataValues.map(Number) : []
+        if (!ndv.includes(-10000)) ndv.push(-10000)
+        shader.noDataValues = ndv
+    }
 
     var uniforms = {}
     for (let i = 0; i < DataShaders[shaderType].settings.length; i++) {
@@ -1644,8 +1751,12 @@ function makeDataLayer(layerObj, mapContext = null) {
     }
 
     L_.layers.layer[layerObj.name] = L.tileLayer.gl({
+        // Always use standard 256px Leaflet tile grid so {z}/{x}/{y} coordinates
+        // stay within the TMS spec. cogTileSize only controls TiTiler's output
+        // pixel dimensions (width/height params) — the smaller raster is
+        // upscaled to 256px by the WebGL texture sampler.
         options: {
-            tms: true,
+            tms: !isTiTilerSource,
             bounds: bb,
         },
         fragmentShader: DataShaders[shaderType].frag,
@@ -1668,7 +1779,7 @@ function makeImageLayer(layerObj, mapContext = null) {
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
     }
     let layerUrl = L_.getUrl(layerObj.type, layerObj.url, layerObj)
     if (!F_.isUrlAbsolute(layerUrl)) {
@@ -1860,7 +1971,7 @@ function makeVideoLayer(layerObj, mapContext = null) {
     // Default to main map context for backward compatibility
     const ctx = mapContext || {
         map: Map_.map,
-        layerRegistry: L_.layers
+        layerRegistry: L_.layers,
     }
     let layerUrl = L_.getUrl(layerObj.type, layerObj.url, layerObj)
     if (!F_.isUrlAbsolute(layerUrl)) {
@@ -2015,7 +2126,10 @@ function buildToolBar() {
     Map_.toolBar.append(scaleBarBounds)
 
     // Create SVG with proper namespace for D3 compatibility
-    const scaleBarSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    const scaleBarSvg = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'svg'
+    )
     scaleBarSvg.setAttribute('id', 'scaleBar')
     scaleBarSvg.setAttribute('width', '270px')
     scaleBarSvg.setAttribute('height', '36px')

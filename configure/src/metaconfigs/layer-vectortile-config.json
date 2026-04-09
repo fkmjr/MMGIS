@@ -407,10 +407,10 @@
             {
               "field": "time.type",
               "name": "Time Type",
-              "description": "When the time changes, whether the layer should requery the source or filter the layer locally based on feature properties.",
+              "description": "URL-based time filtering for vector tile layers. Re-requests tiles with {starttime} and {endtime} injected into the URL. Vector tiles are pre-rendered on the server, so filtering must happen server-side via URL parameters.",
               "type": "dropdown",
               "width": 3,
-              "options": ["requery", "local"]
+              "options": ["requery"]
             }
           ]
         },
@@ -1102,7 +1102,7 @@
             {
               "field": "variables.coordinateAttachments.marker.enabled",
               "name": "Enabled",
-              "description": "Place a marker at every coordinate of every feature.",
+              "description": "Place a marker at every coordinate of every feature. Requires features to use Enhanced GeoJSON format with 'coord_properties' defined (either globally or per-feature). coord_properties names the members of coordinate arrays beyond [lon, lat, elevation]. Example: \"coord_properties\": [\"longitude\", \"latitude\", \"elevation\", \"index\", \"timestamp\", \"heading\"].",
               "type": "switch",
               "width": 3,
               "defaultChecked": false

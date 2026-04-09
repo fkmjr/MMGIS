@@ -16,7 +16,7 @@ var swaggerDocumentMain = require("../docs/mmgis-openapi.json");
 const createError = require("http-errors");
 const cors = require("cors");
 const logger = require("../API/logger");
-const rateLimit = require("express-rate-limit");
+const { rateLimit } = require("express-rate-limit");
 const compression = require("compression");
 
 const session = require("express-session");
@@ -41,20 +41,6 @@ const adjacentServers = require("../adjacent-servers/adjacent-servers");
 const WebSocket = require("isomorphic-ws");
 
 const chalk = require("chalk");
-const webpack = require("webpack");
-const WebpackDevServer = require("webpack-dev-server");
-const clearConsole = require("react-dev-utils/clearConsole");
-const checkRequiredFiles = require("react-dev-utils/checkRequiredFiles");
-const {
-  choosePort,
-  createCompiler,
-  prepareProxy,
-  prepareUrls,
-} = require("react-dev-utils/WebpackDevServerUtils");
-const openBrowser = require("react-dev-utils/openBrowser");
-const paths = require("../configuration/paths");
-const configFactory = require("../configuration/webpack.config");
-const createDevServerConfig = require("../configuration/webpackDevServer.config");
 
 const middleware = require("./middleware").middleware;
 
@@ -68,7 +54,7 @@ const ROOT_PATH = isDevEnv ? "" : process.env.ROOT_PATH || "";
 if (!(process.env.PUBLIC_URL == null || process.env.PUBLIC_URL == ""))
   logger(
     "warn",
-    `The 'PUBLIC_URL' env is deprecated. Please using 'ROOT_PATH' instead.`
+    `The 'PUBLIC_URL' env is deprecated. Please using 'ROOT_PATH' instead.`,
   );
 
 const rootDir = `${__dirname}/..`;
@@ -117,12 +103,12 @@ const pool = new Pool({
             process.env.DB_SSL_CERT_BASE64 != null &&
             process.env.DB_SSL_CERT_BASE64 !== ""
               ? Buffer.from(process.env.DB_SSL_CERT_BASE64, "base64").toString(
-                  "utf-8"
+                  "utf-8",
                 )
               : process.env.DB_SSL_CERT != null &&
-                process.env.DB_SSL_CERT !== ""
-              ? fs.readFileSync(process.env.DB_SSL_CERT)
-              : false,
+                  process.env.DB_SSL_CERT !== ""
+                ? fs.readFileSync(process.env.DB_SSL_CERT)
+                : false,
         }
       : false,
 });
@@ -137,13 +123,13 @@ app.use(
     store: new (require("connect-pg-simple")(session))({
       pool,
     }),
-  })
+  }),
 );
 
 if (process.env.SPICE_SCHEDULED_KERNEL_DOWNLOAD === "true")
   setSPICEKernelDownloadSchedule(
     process.env.SPICE_SCHEDULED_KERNEL_DOWNLOAD_ON_START,
-    process.env.SPICE_SCHEDULED_KERNEL_CRON_EXPR
+    process.env.SPICE_SCHEDULED_KERNEL_CRON_EXPR,
   );
 
 ///
@@ -165,7 +151,7 @@ const cssoHandler = (req, res, next) => {
   if (process.env.AUTH == "csso") {
     if (req.get("X-Groups") !== undefined) {
       req.groups = JSON.parse(
-        Buffer.from(req.get("X-Groups"), "base64").toString("ascii")
+        Buffer.from(req.get("X-Groups"), "base64").toString("ascii"),
       );
       if (req.groups[process.env.CSSO_LEAD_GROUP] === true) {
         req.groups[req.leadGroupName] = true;
@@ -213,7 +199,7 @@ function checkHeadersCodeInjection(req, res, next) {
     res.send({
       Warning:
         "You are not allowed to inject bad code to the application. Your action will be reported!",
-      "Your IP": req.headers["x-forwarded-for"] || req.connection.remoteAddress,
+      "Your IP": req.headers["x-forwarded-for"] || req.socket.remoteAddress,
       "Requested URL": fullUrl,
     });
     res.end();
@@ -225,7 +211,7 @@ function checkHeadersCodeInjection(req, res, next) {
     // res.setHeader('Content-Type', 'application/json');
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Origin, X-Requested-with, Content-Type, Methods"
+      "Origin, X-Requested-with, Content-Type, Methods",
     );
     next();
   }
@@ -300,12 +286,12 @@ function ensureAdmin(
   denyLongTermTokens,
   allowGets,
   allowPosts,
-  disallow
+  disallow,
 ) {
   return (req, res, next) => {
     let url = req.originalUrl.split("?")[0].toLowerCase();
     const remoteAddress =
-      req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+      req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
     if (
       url.endsWith("/api/configure/get") ||
@@ -367,9 +353,9 @@ function ensureAdmin(
             "warn",
             `Unauthorized token call made and rejected (from ${remoteAddress}, with token ${req.headers.authorization})`,
             req.originalUrl,
-            req
+            req,
           );
-        }
+        },
       );
       return;
     }
@@ -379,7 +365,7 @@ function ensureAdmin(
       "warn",
       `Unauthorized call made and rejected (from ${remoteAddress})`,
       req.originalUrl,
-      req
+      req,
     );
     return;
   };
@@ -395,7 +381,7 @@ function validateLongTermToken(token, successCallback, failureCallback) {
         replacements: {
           token: token,
         },
-      }
+      },
     )
     .then((result) => {
       try {
@@ -443,7 +429,7 @@ function ensureUser() {
     } else {
       if (req.headers.authorization) {
         const remoteAddress =
-          req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+          req.headers["x-forwarded-for"] || req.socket.remoteAddress;
         validateLongTermToken(
           req.headers.authorization,
           (tokenData) => {
@@ -459,9 +445,9 @@ function ensureUser() {
               "warn",
               `Unauthorized token call made and rejected (from ${remoteAddress}, with token ${req.headers.authorization})`,
               req.originalUrl,
-              req
+              req,
             );
-          }
+          },
         );
       } else {
         res.render("login", {
@@ -476,9 +462,36 @@ function ensureUser() {
   };
 }
 
+/**
+ * Middleware to protect adjacent server proxies based on AUTH mode
+ * - AUTH=off/none: Allow GETs, require admin for other methods (current behavior)
+ * - AUTH=local/csso: Require user authentication for all methods
+ */
+function ensureUserForAdjacentServers() {
+  return (req, res, next) => {
+    const authMode = process.env.AUTH;
+
+    // For 'off' and 'none', maintain current behavior:
+    // - Allow GET requests
+    // - Require admin for other methods
+    if (authMode === "off" || authMode === "none") {
+      if (req.method === "GET") {
+        next();
+        return;
+      }
+      // For non-GET methods, require admin
+      ensureAdmin()(req, res, next);
+      return;
+    }
+
+    // For 'local' and 'csso', require user authentication for all methods
+    ensureUser()(req, res, next);
+  };
+}
+
 var swaggerOptions = {
-  customCssUrl: "/docs/swagger/swaggerCSS.css",
-  customJs: "/docs/swagger/swaggerJS.js",
+  customCssUrl: ["/docs/swagger/swaggerCSS.css"],
+  customJs: ["/docs/swagger/swaggerJS.js"],
 };
 
 const useSwaggerSchema =
@@ -488,7 +501,12 @@ const useSwaggerSchema =
 
 ///
 adjacentServers();
-initAdjacentServersProxy(app, isDocker, ensureAdmin);
+initAdjacentServersProxy(
+  app,
+  isDocker,
+  ensureAdmin,
+  ensureUserForAdjacentServers,
+);
 //
 
 let s = {
@@ -500,6 +518,7 @@ let s = {
   ensureGroup,
   ensureAdmin,
   ensureUser,
+  ensureUserForAdjacentServers,
   swaggerUi,
   useSwaggerSchema,
   permissions,
@@ -535,6 +554,8 @@ let helmetConfig = {
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'", "blob:", "'unsafe-inline'", "'unsafe-eval'"],
+      scriptSrc: ["'self'", "blob:", "'unsafe-inline'", "'unsafe-eval'"],
+      scriptSrcAttr: null,
       imgSrc: ["*", "data:", "blob:", "'unsafe-inline'"],
       styleSrc: ["*", "data:", "blob:", "'unsafe-inline'"],
       fontSrc: ["*", "data:", "blob:", "'unsafe-inline'"],
@@ -542,12 +563,15 @@ let helmetConfig = {
       mediaSrc: ["*", "data:", "blob:"],
       frameAncestors: process.env.FRAME_ANCESTORS
         ? JSON.parse(process.env.FRAME_ANCESTORS)
-        : "none",
+        : "'none'",
       frameSrc: process.env.FRAME_SRC
         ? JSON.parse(process.env.FRAME_SRC)
-        : "none",
+        : "'none'",
     },
   },
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
 };
 
 app.use(helmet(helmetConfig));
@@ -559,7 +583,7 @@ app.disable("Origin");
 app.use(
   `${ROOT_PATH}/api/docs`,
   swaggerUi.serve,
-  useSwaggerSchema(swaggerDocumentMain)
+  useSwaggerSchema(swaggerDocumentMain),
 );
 
 // Pug is used to render pages.
@@ -574,7 +598,15 @@ app.use(cssoHandler);
 app.use(bodyParser.json({ limit: "500mb" })); // support json encoded bodies
 app.use(bodyParser.urlencoded({ limit: "500mb", extended: true })); // support encoded bodies
 
-app.use(express.urlencoded({ extended: false }));
+// Express 5 no longer initializes req.body to {} — it is undefined when no
+// body-parser middleware has matched the Content-Type.  Many route handlers
+// (files, draw, datasets, etc.) access req.body.* without null-checking, so
+// we restore Express 4 behaviour here to avoid 500s on empty-body POSTs.
+app.use((req, res, next) => {
+  if (req.body === undefined) req.body = {};
+  next();
+});
+
 app.use(cookieParser());
 
 app.use(cors());
@@ -591,7 +623,7 @@ setups.getBackendSetups(function (setups) {
       logger(
         "success",
         "All needed tables exist or have been successfully created!",
-        "server"
+        "server",
       );
 
       //////Setups SYNC//////
@@ -603,8 +635,8 @@ setups.getBackendSetups(function (setups) {
       logger(
         "infrastructure_error",
         "Database tables might not be synced properly! " + error,
-        "server"
-      )
+        "server",
+      ),
     );
 
   // STATICS
@@ -612,39 +644,39 @@ setups.getBackendSetups(function (setups) {
   app.use(
     `${ROOT_PATH}/build`,
     ensureUser(),
-    express.static(path.join(rootDir, "/build"))
+    express.static(path.join(rootDir, "/build")),
   );
   app.use(
     `${ROOT_PATH}/docs`,
     ensureUser(),
-    express.static(path.join(rootDir, "/docs"))
+    express.static(path.join(rootDir, "/docs")),
   );
   app.use(
     `${ROOT_PATH}/README.md`,
-    express.static(path.join(rootDir, "/README.md"))
+    express.static(path.join(rootDir, "/README.md")),
   );
   app.use(
     `${ROOT_PATH}/configure/build`,
     ensureUser(),
-    express.static(path.join(rootDir, "/configure/build"))
+    express.static(path.join(rootDir, "/configure/build")),
   );
   app.use(
     `${ROOT_PATH}/configure/public`,
     ensureUser(),
-    express.static(path.join(rootDir, "/configure/public"))
+    express.static(path.join(rootDir, "/configure/public")),
   );
 
   if (process.argv.includes("--with_examples"))
     app.use(
       `${ROOT_PATH}/examples`,
-      express.static(path.join(rootDir, "/examples"))
+      express.static(path.join(rootDir, "/examples")),
     );
   app.use(`${ROOT_PATH}/public`, express.static(path.join(rootDir, "/public")));
   app.use(
     `${ROOT_PATH}/Missions`,
     ensureUser(),
     middleware.missions(ROOT_PATH),
-    express.static(path.join(rootDir, "/Missions"))
+    express.static(path.join(rootDir, "/Missions")),
   );
   app.get(s.ROOT_PATH + "/resetPassword", (req, res) => {
     const user = process.env.AUTH === "csso" ? req.user : req.user || "";
@@ -666,12 +698,12 @@ setups.getBackendSetups(function (setups) {
     app.use(
       `${ROOT_PATH}/css`,
       ensureUser(),
-      express.static(path.join(rootDir, "/css"))
+      express.static(path.join(rootDir, "/css")),
     );
     app.use(
       `${ROOT_PATH}/src`,
       ensureUser(),
-      express.static(path.join(rootDir, "/src"))
+      express.static(path.join(rootDir, "/src")),
     );
   }
 
@@ -707,7 +739,7 @@ setups.getBackendSetups(function (setups) {
         key: fs.readFileSync(process.env.HTTPS_KEY),
         cert: fs.readFileSync(process.env.HTTPS_CERT),
       },
-      app
+      app,
     );
   } else httpServer = http.createServer(app);
 
@@ -761,7 +793,7 @@ setups.getBackendSetups(function (setups) {
               scienceIntent: process.env.SCIENCE_INTENT_HOST,
             }),
           });
-        }
+        },
       );
     }
     if (err) {
@@ -773,7 +805,7 @@ setups.getBackendSetups(function (setups) {
     setups.started(s);
 
     // error handler
-    app.all("*", (req, res, next) => {
+    app.all("/{*splat}", (req, res, next) => {
       // render the error page
       res.status(404).render("error");
     });
@@ -781,7 +813,7 @@ setups.getBackendSetups(function (setups) {
     logger(
       "success",
       "MMGIS successfully started! It's listening on port: " + port,
-      "server"
+      "server",
     );
 
     if (process.env.ENABLE_MMGIS_WEBSOCKETS) {
@@ -792,44 +824,79 @@ setups.getBackendSetups(function (setups) {
 });
 
 function setupDevServer() {
+  // Load dev-only dependencies inside this function (not needed in production)
+  const paths = require("../configuration/paths");
+  const webpack = require("webpack");
+  const WebpackDevServer = require("webpack-dev-server");
+  const { formatWebpackMessages } = require("../configuration/build-utils");
+  const configFactory = require("../configuration/webpack.config");
+  const createDevServerConfig = require("../configuration/webpackDevServer.config");
+
   const HOST = "localhost";
   const config = configFactory("development");
   const protocol = process.env.HTTPS === "true" ? "https" : "http";
-  const appName = require(paths.appPackageJson).name;
-  const useYarn = fs.existsSync(paths.yarnLockFile);
-  const useTypeScript = fs.existsSync(paths.appTsConfig);
   const isInteractive = process.stdout.isTTY;
-  const tscCompileOnError = process.env.TSC_COMPILE_ON_ERROR === "true";
-  const urls = prepareUrls(
-    protocol,
-    HOST,
-    port,
-    paths.publicUrlOrPath.slice(0, -1)
-  );
-  const devSocket = {
-    warnings: (warnings) =>
-      devServer.sockWrite(devServer.sockets, "warnings", warnings),
-    errors: (errors) =>
-      devServer.sockWrite(devServer.sockets, "errors", errors),
+  const { URL } = require("url");
+  const lanUrl = new URL(`${protocol}://${HOST}:${port}${paths.publicUrlOrPath.slice(0, -1)}`);
+  const urls = {
+    lanUrlForConfig: HOST,
+    lanUrlForTerminal: lanUrl.href,
+    localUrlForTerminal: `${protocol}://localhost:${port}${paths.publicUrlOrPath.slice(0, -1)}`,
+    localUrlForBrowser: `${protocol}://localhost:${port}${paths.publicUrlOrPath.slice(0, -1)}`,
   };
-  // Create a webpack compiler that is configured with custom messages.
-  const compiler = createCompiler({
-    appName,
-    config,
-    devSocket,
-    urls,
-    useYarn,
-    useTypeScript,
-    tscCompileOnError,
-    webpack,
+  // Create a webpack compiler
+  const compiler = webpack(config);
+  compiler.hooks.done.tap("done", (stats) => {
+    const statsData = stats.toJson({ all: false, warnings: true, errors: true });
+    const messages = formatWebpackMessages(statsData);
+    if (messages.errors.length) {
+      console.log(chalk.red("Failed to compile.\n"));
+      console.log(messages.errors.join("\n\n"));
+    }
+    if (messages.warnings.length) {
+      console.log(chalk.yellow("Compiled with warnings.\n"));
+      console.log(messages.warnings.join("\n\n"));
+    }
   });
-  // Load proxy config
+  // Load proxy config — forward all non-webpack requests to the Express server.
+  // The original prepareProxy from react-dev-utils acted as a catch-all proxy.
   const proxySetting = `http://localhost:${port}`;
-  const proxyConfig = prepareProxy(
-    proxySetting,
-    paths.appPublic,
-    paths.publicUrlOrPath
-  );
+  const proxyConfig = [
+    {
+      context: (pathname, req) => {
+        // Don't proxy webpack-dev-server internal paths or HMR websocket
+        if (
+          pathname.startsWith("/ws") ||
+          pathname.startsWith("/sockjs-node")
+        ) {
+          return false;
+        }
+        // Don't proxy requests for webpack-compiled assets (served by dev server)
+        if (
+          pathname.startsWith("/static/") ||
+          pathname.endsWith(".hot-update.json") ||
+          pathname.endsWith(".hot-update.js")
+        ) {
+          return false;
+        }
+        // Don't proxy browser page loads (Accept: text/html) — let
+        // historyApiFallback handle them so the React SPA index.html is served.
+        if (
+          req.method === "GET" &&
+          req.headers.accept &&
+          req.headers.accept.indexOf("text/html") !== -1
+        ) {
+          return false;
+        }
+        // Proxy everything else to the Express server
+        return true;
+      },
+      target: proxySetting,
+      changeOrigin: true,
+      ws: false,
+      xfwd: true,
+    },
+  ];
 
   // Serve webpack assets generated by the compiler over a web server.
   const serverConfig = createDevServerConfig(proxyConfig, urls.lanUrlForConfig);
@@ -842,7 +909,7 @@ function setupDevServer() {
       return console.log(err);
     }
     if (isInteractive) {
-      clearConsole();
+      console.clear();
     }
 
     // We used to support resolving modules according to `NODE_PATH`.
@@ -851,8 +918,8 @@ function setupDevServer() {
     if (process.env.NODE_PATH) {
       console.log(
         chalk.yellow(
-          "Setting NODE_PATH to resolve modules absolutely has been deprecated in favor of setting baseUrl in jsconfig.json (or tsconfig.json if you are using TypeScript) and will be removed in a future major release of create-react-app."
-        )
+          "Setting NODE_PATH to resolve modules absolutely has been deprecated in favor of setting baseUrl in jsconfig.json (or tsconfig.json if you are using TypeScript) and will be removed in a future major release of create-react-app.",
+        ),
       );
       console.log();
     }

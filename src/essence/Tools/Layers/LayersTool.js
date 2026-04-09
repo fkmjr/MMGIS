@@ -143,8 +143,11 @@ var LayersTool = {
         }
 
         if (L_.UserInterface_.isMobile === true) {
+            const mapRect = document
+                .getElementById('map')
+                .getBoundingClientRect()
             this.width = 'full'
-            this.height = 500
+            this.height = Math.round(mapRect.height * 0.7)
         }
     },
     finalize: function () {
@@ -209,7 +212,7 @@ var LayersTool = {
                 let _event = new CustomEvent('layersToolHeaderStateChange', {
                     detail: {
                         header_id: elmIndex.split('_')[1],
-                        onState: wasOn[currentHeaderIdx] ? 'false' : 'true',
+                        onState: wasOn[currentHeaderIdx] ? false : true,
                     },
                 })
                 document.dispatchEvent(_event)
@@ -285,21 +288,26 @@ var LayersTool = {
     },
     populateCogScale: function (layerName) {
         let layer = L_.asLayerUUID(layerName)
+        if (layer == null) return
         let units = ''
         layer = L_.layers.data[layer]
+        if (layer == null) return
         if (L_.layers.layer[layer.name] === null) return
 
+        // data layers use demtileurl; other layers use url
+        const layerUrl = layer.url || layer.demtileurl || ''
+        if (typeof layerUrl !== 'string') return
         if (
-            !layer.url.startsWith('stac-collection:') &&
-            !layer.url.startsWith('COG:') &&
+            !layerUrl.startsWith('stac-collection:') &&
+            !layerUrl.startsWith('COG:') &&
             layer.type !== 'image' &&
             layer.type !== 'velocity'
         )
             return
         if (
             layer.cogTransform !== true &&
-            (layer.url.startsWith('stac-collection:') ||
-                layer.url.startsWith('COG:') ||
+            (layerUrl.startsWith('stac-collection:') ||
+                layerUrl.startsWith('COG:') ||
                 layer.type === 'image')
         )
             return
@@ -497,20 +505,18 @@ function interfaceWithMMGIS(fromInit) {
         separateFromMMGIS()
     }
 
-    const divID = L_.UserInterface_.isMobile === true ?  '#tools' : '#toolPanel'
+    const divID = L_.UserInterface_.isMobile === true ? '#tools' : '#toolPanel'
 
     const toolsContainer = $(divID)
     //Clear it
     toolsContainer.empty()
     //Add a semantic container
-    const tools = $('<div>')
-        .attr('id', 'layersTool')
-        .css({
-            'display': 'flex',
-            'flex-flow': 'column',
-            'overflow': 'hidden',
-            'height': '100%'
-        })
+    const tools = $('<div>').attr('id', 'layersTool').css({
+        display: 'flex',
+        'flex-flow': 'column',
+        overflow: 'hidden',
+        height: '100%',
+    })
     toolsContainer.append(tools)
 
     if (fromInit) tools.css('display', 'none')
@@ -990,7 +996,11 @@ function interfaceWithMMGIS(fromInit) {
                     additionalSettings = ''
                     const shader = F_.getIn(node[i], 'variables.shader')
 
-                    if (shader && DataShaders[shader.type]) {
+                    if (
+                        shader &&
+                        DataShaders[shader.type] &&
+                        typeof DataShaders[shader.type].getHTML === 'function'
+                    ) {
                         // prettier-ignore
                         additionalSettings = [
                             DataShaders[shader.type].getHTML(node[i].name, shader)
@@ -1485,6 +1495,8 @@ function interfaceWithMMGIS(fromInit) {
                 L_.layers.layer[layerName] == null
             )
                 li.addClass('layernotfound')
+
+            if (!checkbox.hasClass('on')) li.removeClass('gears_on')
 
             if (checkbox.hasClass('on')) {
                 if (
@@ -2121,6 +2133,18 @@ function interfaceWithMMGIS(fromInit) {
                 currentCogMin: layer.currentCogMin,
                 currentCogMax: layer.currentCogMax,
             })
+
+            // Also update Cesium if Globe exists
+            if (
+                L_.Globe_ &&
+                L_.Globe_.litho &&
+                L_.Globe_.litho.updateLayerCogParameters
+            ) {
+                L_.Globe_.litho.updateLayerCogParameters(layer.name, {
+                    currentCogMin: layer.currentCogMin,
+                    currentCogMax: layer.currentCogMax,
+                })
+            }
         } else if (layer.type === 'image') {
             // TODO FIXME DOUBLE CHECK
             updateImageRange(
@@ -2165,6 +2189,17 @@ function interfaceWithMMGIS(fromInit) {
             L_.layers.layer[layer.name].refresh(null, true, {
                 currentCogExpression: newExpression,
             })
+
+            // Also update Cesium
+            if (
+                L_.Globe_ &&
+                L_.Globe_.litho &&
+                L_.Globe_.litho.updateLayerCogParameters
+            ) {
+                L_.Globe_.litho.updateLayerCogParameters(layer.name, {
+                    currentCogExpression: newExpression,
+                })
+            }
         } else if (layer.type === 'image') {
             L_.layers.layer[layer.name].refresh(null, true, {
                 currentCogExpression: newExpression,
@@ -2202,6 +2237,17 @@ function interfaceWithMMGIS(fromInit) {
             L_.layers.layer[layerData.name].refresh(null, true, {
                 currentCogExpression: null,
             })
+
+            // Also update Cesium
+            if (
+                L_.Globe_ &&
+                L_.Globe_.litho &&
+                L_.Globe_.litho.updateLayerCogParameters
+            ) {
+                L_.Globe_.litho.updateLayerCogParameters(layerData.name, {
+                    currentCogExpression: null,
+                })
+            }
         } else if (layerData.type === 'image') {
             L_.layers.layer[layerData.name].refresh(null, true, {
                 currentCogExpression: null,
@@ -2428,6 +2474,17 @@ function interfaceWithMMGIS(fromInit) {
             L_.layers.layer[layer.name].refresh(null, true, {
                 currentCogMin: layer.currentCogMin,
             })
+
+            // Also update Cesium
+            if (
+                L_.Globe_ &&
+                L_.Globe_.litho &&
+                L_.Globe_.litho.updateLayerCogParameters
+            ) {
+                L_.Globe_.litho.updateLayerCogParameters(layer.name, {
+                    currentCogMin: layer.currentCogMin,
+                })
+            }
         } else if (layer.type === 'image') {
             updateImageRange(
                 layer.name,
@@ -2465,6 +2522,17 @@ function interfaceWithMMGIS(fromInit) {
             L_.layers.layer[layer.name].refresh(null, true, {
                 currentCogMax: layer.currentCogMax,
             })
+
+            // Also update Cesium
+            if (
+                L_.Globe_ &&
+                L_.Globe_.litho &&
+                L_.Globe_.litho.updateLayerCogParameters
+            ) {
+                L_.Globe_.litho.updateLayerCogParameters(layer.name, {
+                    currentCogMax: layer.currentCogMax,
+                })
+            }
         } else if (layer.type === 'image') {
             updateImageRange(
                 layer.name,
@@ -2653,7 +2721,11 @@ function interfaceWithMMGIS(fromInit) {
         $('#searchLayers > #collapse').click()
 
         // Expand individual headers based on its configuration settings
-        LayersTool.traverseHeaderLayersExpandedState(L_.configData.layers, {}, 0)
+        LayersTool.traverseHeaderLayersExpandedState(
+            L_.configData.layers,
+            {},
+            0
+        )
     })
 
     $('#filterLayers .right > div').on('click', function () {
@@ -2899,7 +2971,11 @@ function interfaceWithMMGIS(fromInit) {
     if (LayersTool.vars.expanded !== true) {
         $('#searchLayers > #collapse').click()
         // Expand individual headers based on its configuration settings
-        LayersTool.traverseHeaderLayersExpandedState(L_.configData.layers, {}, 0)
+        LayersTool.traverseHeaderLayersExpandedState(
+            L_.configData.layers,
+            {},
+            0
+        )
     }
 
     // Sublayer things
@@ -3105,12 +3181,18 @@ function interfaceWithMMGIS(fromInit) {
         }
     }
 
-    document.addEventListener('layerRefreshStatusChanged', handleRefreshStatusChange)
+    document.addEventListener(
+        'layerRefreshStatusChanged',
+        handleRefreshStatusChange
+    )
 
     //Share everything. Don't take things that aren't yours.
     // Put things back where you found them.
     function separateFromMMGIS() {
-        document.removeEventListener('layerRefreshStatusChanged', handleRefreshStatusChange)
+        document.removeEventListener(
+            'layerRefreshStatusChanged',
+            handleRefreshStatusChange
+        )
     }
 }
 

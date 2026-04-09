@@ -11,6 +11,7 @@ nul
 !/Missions/.gitkeep
 /private/api/spice/kernels/*
 /configure/public/toolConfigs.json
+configure/public/toolConfigs.json
 /configure/public/componentConfigs.json
 
 #Nested repos where private backend might reside
@@ -48,6 +49,7 @@ sessions
 .terraform.lock.hcl
 
 docker-compose.yml
+docker-compose.minimal.yml
 docker-compose.env.yml
 
 .mcp.json
