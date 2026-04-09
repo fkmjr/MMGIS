@@ -413,6 +413,12 @@ var Test = {
                 $('#drawToolContextMenuPropertiesDescription').text(
                     'Description Changed'
                 )
+                $('#drawToolContextMenuTargetIsTarget')
+                    .prop('checked', true)
+                    .trigger('change')
+                $('#drawToolContextMenuTargetType')
+                    .val('Sample')
+                    .trigger('change')
                 //$('.drawToolContextMenuStyleHeader i').click()
                 $('.drawToolContextMenu .strokecolor').attr(
                     'v',
@@ -439,6 +445,8 @@ var Test = {
                         'Edits description',
                         p.description === 'Description Changed'
                     )
+                    c('Edits target flag', p.is_target === true)
+                    c('Edits target type', p.target_type === 'Sample')
                     c(
                         'Edits stroke color',
                         p.style.color === 'rgb(255,255,255)'

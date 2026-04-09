@@ -1097,6 +1097,49 @@
     background: transparent;
     color: var(--color-f);
 }
+.drawToolContextMenuTarget {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.drawToolContextMenuTargetTitle {
+    color: #91c676;
+    font-size: 18px;
+    line-height: 22px;
+}
+.drawToolContextMenuTargetSubtitle {
+    color: var(--color-a5);
+    font-size: 13px;
+    line-height: 18px;
+}
+.drawToolContextMenuTargetRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 12px;
+    background: var(--color-i);
+    border-bottom: 2px solid transparent;
+    transition:
+        border-color 0.2s ease-in-out,
+        background 0.2s ease-in-out;
+}
+.drawToolContextMenuTargetCheckboxRow {
+    cursor: pointer;
+}
+.drawToolContextMenuTargetLabel {
+    color: var(--color-f);
+}
+.drawToolContextMenuTargetRow select {
+    min-width: 148px;
+    color: var(--color-f);
+    background: var(--color-a1);
+    border: 1px solid var(--color-a1-5);
+    padding: 6px 8px;
+}
+.drawToolContextMenuTargetRow select:disabled {
+    opacity: 0.5;
+}
 
 .drawToolFileInfo {
     width: 100%;
@@ -2573,6 +2616,9 @@ line-height: 20px;
 }
 .drawToolContextMenuPropertiesCollapsible.state-collapsed > div:last-child {
     display: none;
+}
+.drawToolContextMenuTabTarget {
+    padding-top: 14px;
 }
 
 /*files loading spinner*/

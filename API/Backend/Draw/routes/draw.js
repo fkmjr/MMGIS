@@ -463,6 +463,7 @@ const _templateConform = (req, from) => {
 
     getfile(req, {
       send: (r) => {
+        let normalizedProperties = JSON.parse(req.body.properties || "{}");
         if (r.status === "success") {
           const geojson = r.body.geojson;
           const template =
@@ -489,11 +490,14 @@ const _templateConform = (req, from) => {
             }
           });
 
-          req.body.properties = JSON.stringify({
+          normalizedProperties = {
             ...existingProperties,
             ...templaterProperties,
-          });
+          };
         }
+        req.body.properties = JSON.stringify(
+          _normalizeTargetProperties(normalizedProperties)
+        );
         resolve();
         return;
       },
@@ -599,6 +603,41 @@ const _templateConform = (req, from) => {
       return response;
     }
   });
+};
+
+const _normalizeTargetProperties = (properties) => {
+  const normalizedProperties = { ...(properties || {}) };
+
+  if (Object.prototype.hasOwnProperty.call(normalizedProperties, "is_target")) {
+    normalizedProperties.is_target =
+      normalizedProperties.is_target === true ||
+      normalizedProperties.is_target === "true" ||
+      normalizedProperties.is_target === 1 ||
+      normalizedProperties.is_target === "1";
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(normalizedProperties, "target_type")
+  ) {
+    if (normalizedProperties.target_type == null) {
+      delete normalizedProperties.target_type;
+    } else {
+      normalizedProperties.target_type = String(
+        normalizedProperties.target_type
+      ).trim();
+      if (normalizedProperties.target_type === "") {
+        delete normalizedProperties.target_type;
+      }
+    }
+  }
+
+  if (normalizedProperties.target_type != null) {
+    normalizedProperties.is_target = true;
+  } else if (normalizedProperties.is_target !== true) {
+    normalizedProperties.is_target = false;
+  }
+
+  return normalizedProperties;
 };
 /**
  * Adds a feature

@@ -107,6 +107,8 @@ var Editing = {
             DrawTool.contextMenuChanges.use = false
             DrawTool.contextMenuChanges.props.name = true
             DrawTool.contextMenuChanges.props.description = true
+            DrawTool.contextMenuChanges.props.is_target = true
+            DrawTool.contextMenuChanges.props.target_type = true
             DrawTool.contextMenuChanges.style.color = true
             DrawTool.contextMenuChanges.style.opacity = true
             DrawTool.contextMenuChanges.style.dashArray = true
@@ -127,6 +129,8 @@ var Editing = {
             // ie. don't set all the fillColors to one color if it wasn't changed.
             DrawTool.contextMenuChanges.props.name = false
             DrawTool.contextMenuChanges.props.description = false
+            DrawTool.contextMenuChanges.props.is_target = false
+            DrawTool.contextMenuChanges.props.target_type = false
             DrawTool.contextMenuChanges.style.color = false
             DrawTool.contextMenuChanges.style.opacity = false
             DrawTool.contextMenuChanges.style.dashArray = false
@@ -293,6 +297,7 @@ var Editing = {
             hideStyle = true
 
         var properties, style, file
+        let targetProperties = {}
 
         if (!deselecting) {
             if (typeof DrawTool.contextMenuLayer.toGeoJSON === 'function')
@@ -309,6 +314,13 @@ var Editing = {
             properties = DrawTool.contextMenuLayer.feature.properties
             properties.style = properties.style || {}
             style = properties.style || {}
+            targetProperties = {
+                is_target: properties.is_target === true,
+                target_type:
+                    properties.target_type != null
+                        ? String(properties.target_type)
+                        : '',
+            }
             let fallbackStyle = {}
             if (kindLayerName && L_.layers.data[kindLayerName]?.style)
                 fallbackStyle = L_.layers.data[kindLayerName].style
@@ -423,6 +435,13 @@ var Editing = {
                 properties = DrawTool.contextMenuLayer.feature.properties
                 properties.style = properties.style || {}
                 style = properties.style || {}
+                targetProperties = {
+                    is_target: properties.is_target === true,
+                    target_type:
+                        properties.target_type != null
+                            ? String(properties.target_type)
+                            : '',
+                }
                 let fallbackStyle = {}
                 if (kindLayerName && L_.layers.data[kindLayerName].style)
                     fallbackStyle = L_.layers.data[kindLayerName].style
@@ -598,6 +617,9 @@ var Editing = {
                 "<div class='drawToolContextMenuTabButton' tab='drawToolContextMenuTabProperties' title='Properties'>",
                     "<i class='mdi mdi-list-box mdi-24px'></i>",
                 "</div>",
+                "<div class='drawToolContextMenuTabButton' tab='drawToolContextMenuTabTarget' title='Target'>",
+                    "<i class='mdi mdi-crosshairs-gps mdi-24px'></i>",
+                "</div>",
                 (!displayOnly) ? "<div class='drawToolContextMenuTabButton' tab='drawToolContextMenuTabStyle' title='Style' style='display: " + ( (hideStyle) ? 'none' : 'inherit' ) + "'><i class='mdi mdi-palette mdi-24px'></i></div>" : "",
                 (!displayOnly && DrawTool.plugins?.Geologic) ? "<div class='drawToolContextMenuTabButton'  tab='drawToolContextMenuTabGeologic' title='Geologic'><i class='mdi mdi-earth-box mdi-24px'></i></div>" : "",
                 (!displayOnly && DrawTool.plugins?.MTTTT) ? "<div class='drawToolContextMenuTabButton' tab='drawToolContextMenuTabMTTTT' title='MTn Trail Guide'><i class='mdi mdi-image-filter-hdr mdi-24px'></i></div>" : '',
@@ -676,6 +698,28 @@ var Editing = {
                         "<div id='drawToolContextMenuPropertiesReassignUUIDValue'>" + uuid + "</div>",
                         "<div id='drawToolContextMenuPropertiesReassignUUID' class='drawToolButton1'>Reassign</div>",
                     "</div>"].join('\n') : "",
+                "</div>",
+            "</div>",
+
+            "<div class='drawToolContextMenuTab drawToolContextMenuTabTarget'>",
+                "<div class='drawToolContextMenuTarget'>",
+                    "<div class='drawToolContextMenuTargetTitle'>Science Target</div>",
+                    "<div class='drawToolContextMenuTargetSubtitle'>Tag this feature as a science target and assign a target type.</div>",
+                    "<label class='drawToolContextMenuTargetRow drawToolContextMenuTargetCheckboxRow'>",
+                        "<div class='drawToolContextMenuTargetLabel'>Mark as target</div>",
+                        "<div class='mmgis-checkbox small'><input type='checkbox' id='drawToolContextMenuTargetIsTarget' " + (targetProperties.is_target ? 'checked' : '') + " /><label for='drawToolContextMenuTargetIsTarget'></label></div>",
+                    "</label>",
+                    "<div class='drawToolContextMenuTargetRow drawToolContextMenuTargetTypeRow'>",
+                        "<div class='drawToolContextMenuTargetLabel'>Target Type</div>",
+                        "<select id='drawToolContextMenuTargetType'>",
+                            "<option value=''>None</option>",
+                            "<option value='Observation'" + (targetProperties.target_type === 'Observation' ? ' selected' : '') + ">Observation</option>",
+                            "<option value='Sample'" + (targetProperties.target_type === 'Sample' ? ' selected' : '') + ">Sample</option>",
+                            "<option value='Outcrop'" + (targetProperties.target_type === 'Outcrop' ? ' selected' : '') + ">Outcrop</option>",
+                            "<option value='Contact'" + (targetProperties.target_type === 'Contact' ? ' selected' : '') + ">Contact</option>",
+                            "<option value='Waypoint'" + (targetProperties.target_type === 'Waypoint' ? ' selected' : '') + ">Waypoint</option>",
+                        "</select>",
+                    "</div>",
                 "</div>",
             "</div>",
 
@@ -950,6 +994,77 @@ var Editing = {
 
         $('#drawToolContextMenuPropertiesDescription').text(description)
 
+        function ensureTargetTypeOption(value) {
+            const normalizedValue =
+                value != null && String(value).trim() !== ''
+                    ? String(value).trim()
+                    : ''
+            if (normalizedValue === '') return
+
+            const optionValues = $('#drawToolContextMenuTargetType option')
+                .map(function () {
+                    return $(this).val()
+                })
+                .get()
+
+            if (!optionValues.includes(normalizedValue)) {
+                $('#drawToolContextMenuTargetType').append(
+                    $('<option></option>')
+                        .attr('value', normalizedValue)
+                        .text(normalizedValue)
+                )
+            }
+        }
+
+        function updateTargetUiFromProperties(sourceProperties) {
+            const isTarget = sourceProperties?.is_target === true
+            const targetType =
+                sourceProperties?.target_type != null
+                    ? String(sourceProperties.target_type).trim()
+                    : ''
+
+            ensureTargetTypeOption(targetType)
+            $('#drawToolContextMenuTargetIsTarget').prop('checked', isTarget)
+            $('#drawToolContextMenuTargetType').val(targetType)
+            $('#drawToolContextMenuTargetType').prop('disabled', !isTarget)
+
+            const initialTargetType =
+                properties?.target_type != null
+                    ? String(properties.target_type).trim()
+                    : ''
+
+            $('.drawToolContextMenuTargetCheckboxRow').css(
+                'border-bottom',
+                isTarget !== (properties?.is_target === true)
+                    ? DrawTool.highlightBorder
+                    : 'inherit'
+            )
+            $('.drawToolContextMenuTargetTypeRow').css(
+                'border-bottom',
+                targetType !== initialTargetType
+                    ? DrawTool.highlightBorder
+                    : 'inherit'
+            )
+
+            $('.drawToolContextMenuTargetCheckboxRow').css(
+                'background',
+                DrawTool.contextMenuChanges.use &&
+                    DrawTool.contextMenuChanges.props.is_target
+                    ? DrawTool.highlightGradient
+                    : 'inherit'
+            )
+            $('.drawToolContextMenuTargetTypeRow').css(
+                'background',
+                DrawTool.contextMenuChanges.use &&
+                    DrawTool.contextMenuChanges.props.target_type
+                    ? DrawTool.highlightGradient
+                    : 'inherit'
+            )
+        }
+
+        ensureTargetTypeOption(targetProperties.target_type)
+        updateTargetUiFromProperties(targetProperties)
+
         //Remove if not an owner
         if (!ownedByUser) {
             $('.drawToolContextMenuStyleHeader').remove()
@@ -1041,6 +1156,10 @@ var Editing = {
                     DrawTool.contextMenuLayer.feature.properties
                 )
             }
+
+            updateTargetUiFromProperties(
+                DrawTool.contextMenuLayer?.feature?.properties || {}
+            )
 
             resetShape()
         })
@@ -1136,6 +1255,8 @@ var Editing = {
 
             //Other
             DrawTool.contextMenuChanges.props.description = false
+            DrawTool.contextMenuChanges.props.is_target = false
+            DrawTool.contextMenuChanges.props.target_type = false
             DrawTool.contextMenuChanges.style.color = false
             DrawTool.contextMenuChanges.style.opacity = false
             DrawTool.contextMenuChanges.style.dashArray = false
@@ -2460,6 +2581,40 @@ var Editing = {
             }
         })
 
+        $('#drawToolContextMenuTargetIsTarget').on('change', function () {
+            const checked = $(this).is(':checked')
+            DrawTool.contextMenuChanges.props.is_target = true
+
+            if (!checked) {
+                $('#drawToolContextMenuTargetType').val('')
+                DrawTool.contextMenuChanges.props.target_type = true
+            }
+
+            updateTargetUiFromProperties({
+                is_target: checked,
+                target_type: checked
+                    ? $('#drawToolContextMenuTargetType').val()
+                    : '',
+            })
+        })
+
+        $('#drawToolContextMenuTargetType').on('change', function () {
+            const value = ($(this).val() || '').trim()
+            DrawTool.contextMenuChanges.props.target_type = true
+
+            if (value !== '') {
+                $('#drawToolContextMenuTargetIsTarget').prop('checked', true)
+                DrawTool.contextMenuChanges.props.is_target = true
+            }
+
+            updateTargetUiFromProperties({
+                is_target: $('#drawToolContextMenuTargetIsTarget').is(
+                    ':checked'
+                ),
+                target_type: value,
+            })
+        })
+
         //REASSIGN UUID
         $('#drawToolContextMenuPropertiesReassignUUID').on(
             'click',
@@ -2778,6 +2933,22 @@ var Editing = {
                 newProperties.description =
                     $('#drawToolContextMenuPropertiesDescription').val() ||
                     properties.description
+            if (force || DrawTool.contextMenuChanges.props.is_target)
+                newProperties.is_target = $(
+                    '#drawToolContextMenuTargetIsTarget'
+                ).is(':checked')
+            if (
+                force ||
+                DrawTool.contextMenuChanges.props.target_type ||
+                DrawTool.contextMenuChanges.props.is_target
+            ) {
+                const targetType = (
+                    $('#drawToolContextMenuTargetType').val() || ''
+                ).trim()
+                if (newProperties.is_target === true && targetType !== '')
+                    newProperties.target_type = targetType
+                else delete newProperties.target_type
+            }
             if (
                 hasStrokeColor &&
                 (force || DrawTool.contextMenuChanges.style.color)
