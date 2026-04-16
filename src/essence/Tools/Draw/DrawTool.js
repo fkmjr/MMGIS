@@ -29,6 +29,7 @@ import hotkeys from 'hotkeys-js'
 
 // Plugins
 import DrawTool_Geologic from './Plugins/Geologic/DrawTool_Geologic'
+import DrawTool_ScienceTargets from './Plugins/ScienceTargets/DrawTool_ScienceTargets'
 import DrawTool_SetOperations from './Plugins/SetOperations/DrawTool_SetOperations'
 // Plugins OFF
 //const DrawTool_Geologic = null
@@ -544,6 +545,8 @@ var DrawTool = {
 
         // Plugins
         if (DrawTool_Geologic) DrawTool_Geologic.init(DrawTool)
+        if (DrawTool_ScienceTargets)
+            DrawTool_ScienceTargets.init(DrawTool)
         if (DrawTool_MTTTT) DrawTool_MTTTT.init(DrawTool)
         if (DrawTool_ScienceIntent) DrawTool_ScienceIntent.init(DrawTool)
         if (DrawTool_SetOperations) DrawTool_SetOperations.init(DrawTool)

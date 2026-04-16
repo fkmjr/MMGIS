@@ -61,6 +61,7 @@ const Geologic = {
         DrawTool = tool
 
         DrawTool.plugins.Geologic = {
+            getTabButton: Geologic.getTabButton,
             getUI: Geologic.getGeologicUI,
             addEvents: Geologic.addGeologicEvents,
             clear: Geologic.clearGeologic,
@@ -102,6 +103,11 @@ const Geologic = {
                 `<div class='geologicColor' style='background: ${color};' fillColor='${color}'></div>`
             )
         })
+    },
+    getTabButton: function (ownedByUser, isMaster, displayOnly) {
+        if (displayOnly) return ''
+
+        return "<div class='drawToolContextMenuTabButton' tab='drawToolContextMenuTabGeologic' title='Geologic'><i class='mdi mdi-earth-box mdi-24px'></i></div>"
     },
     clearGeologic: function () {
         Map_.rmNotNull(Geologic._symbolReplacedLayer)

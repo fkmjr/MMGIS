@@ -17,6 +17,7 @@ var SetOperations = {
         DrawTool = tool
 
         DrawTool.plugins.SetOperations = {
+            getTabButton: SetOperations.getTabButton,
             getUI: SetOperations.getSetOperationsUI,
             addEvents: SetOperations.addSetOperationsEvents,
             custom: {
@@ -27,6 +28,11 @@ var SetOperations = {
         DrawTool.endSplitDrawing = SetOperations.endSplitDrawing
         DrawTool.getSetOperationsUI = SetOperations.getSetOperationsUI
         DrawTool.addSetOperationsEvents = SetOperations.addSetOperationsEvents
+    },
+    getTabButton: function (ownedByUser, isMaster, displayOnly) {
+        if (displayOnly) return ''
+
+        return "<div class='drawToolContextMenuTabButton' tab='drawToolContextMenuTabSetOperations' title='Set Operations'><i class='mdi mdi-vector-combine mdi-24px'></i></div>"
     },
     getSetOperationsUI: function () {
         // prettier-ignore
