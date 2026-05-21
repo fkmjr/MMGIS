@@ -63,3 +63,4 @@ docker-compose.env.yml
 /.playwright/
 #tools
 
+/agents/
